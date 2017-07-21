@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"html/template"
 	"io"
@@ -9,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -29,6 +31,7 @@ var requiredTmpls = []string{
 }
 
 type templates struct {
+	rawJSON      bool
 	loginTmpl    *template.Template
 	approvalTmpl *template.Template
 	passwordTmpl *template.Template
@@ -83,9 +86,6 @@ func dirExists(dir string) error {
 //    |- templates
 //
 func loadWebConfig(c webConfig) (static, theme http.Handler, templates *templates, err error) {
-	if c.theme == "" {
-		c.theme = "coreos"
-	}
 	if c.issuer == "" {
 		c.issuer = "dex"
 	}
@@ -119,6 +119,11 @@ func loadWebConfig(c webConfig) (static, theme http.Handler, templates *template
 
 // loadTemplates parses the expected templates from the provided directory.
 func loadTemplates(c webConfig, templatesDir string) (*templates, error) {
+	if c.theme == "" {
+		return &templates{
+			rawJSON: true,
+		}, nil
+	}
 	files, err := ioutil.ReadDir(templatesDir)
 	if err != nil {
 		return nil, fmt.Errorf("read dir: %v", err)
@@ -169,32 +174,38 @@ var scopeDescriptions = map[string]string{
 	"email":          "View your email",
 }
 
-type connectorInfo struct {
-	ID   string
-	Name string
-	URL  string
+type ConnectorInfo struct {
+	ID   string `json:"id"`
+	Name string `json:"name"`
+	URL  string `json:"url"`
 }
 
-type byName []connectorInfo
+type byName []ConnectorInfo
 
 func (n byName) Len() int           { return len(n) }
 func (n byName) Less(i, j int) bool { return n[i].Name < n[j].Name }
 func (n byName) Swap(i, j int)      { n[i], n[j] = n[j], n[i] }
 
-func (t *templates) login(w http.ResponseWriter, connectors []connectorInfo) error {
+func (t *templates) login(w http.ResponseWriter, connectors []ConnectorInfo) error {
 	sort.Sort(byName(connectors))
 	data := struct {
-		Connectors []connectorInfo
+		Connectors []ConnectorInfo `json:"connectors"`
 	}{connectors}
+	if t.rawJSON {
+		return writeJSON(w, http.StatusOK, data)
+	}
 	return renderTemplate(w, t.loginTmpl, data)
 }
 
 func (t *templates) password(w http.ResponseWriter, postURL, lastUsername string, lastWasInvalid bool) error {
 	data := struct {
-		PostURL  string
-		Username string
-		Invalid  bool
+		PostURL  string `json:"url"`
+		Username string `json:"lastUsername"`
+		Invalid  bool   `json:"lastInvalid"`
 	}{postURL, lastUsername, lastWasInvalid}
+	if t.rawJSON {
+		return writeJSON(w, http.StatusOK, data)
+	}
 	return renderTemplate(w, t.passwordTmpl, data)
 }
 
@@ -208,26 +219,35 @@ func (t *templates) approval(w http.ResponseWriter, authReqID, username, clientN
 	}
 	sort.Strings(accesses)
 	data := struct {
-		User      string
-		Client    string
-		AuthReqID string
-		Scopes    []string
+		User      string   `json:"user"`
+		Client    string   `json:"client"`
+		AuthReqID string   `json:"authReqID"`
+		Scopes    []string `json:"scopes"`
 	}{username, clientName, authReqID, accesses}
+	if t.rawJSON {
+		return writeJSON(w, http.StatusOK, data)
+	}
 	return renderTemplate(w, t.approvalTmpl, data)
 }
 
 func (t *templates) oob(w http.ResponseWriter, code string) error {
 	data := struct {
-		Code string
+		Code string `json:"code"`
 	}{code}
+	if t.rawJSON {
+		return writeJSON(w, http.StatusOK, data)
+	}
 	return renderTemplate(w, t.oobTmpl, data)
 }
 
-func (t *templates) err(w http.ResponseWriter, errType string, errMsg string) error {
+func (t *templates) err(w http.ResponseWriter, status int, errMsg string) error {
 	data := struct {
 		ErrType string
 		ErrMsg  string
-	}{errType, errMsg}
+	}{http.StatusText(status), errMsg}
+	if t.rawJSON {
+		return writeJSON(w, status, data)
+	}
 	return renderTemplate(w, t.errorTmpl, data)
 }
 
@@ -251,5 +271,21 @@ func renderTemplate(w http.ResponseWriter, tmpl *template.Template, data interfa
 		}
 		return fmt.Errorf("Error rendering template %s: %s", tmpl.Name(), err)
 	}
+	return nil
+}
+
+type Error struct {
+	Message string `json:"message"`
+}
+
+func writeJSON(w http.ResponseWriter, status int, data interface{}) error {
+	w.Header().Set("Content-Type", "application/json")
+	body, err := json.Marshal(data)
+	if err != nil {
+		return fmt.Errorf("can't unmarshal data %v to json", data)
+	}
+	w.Header().Set("Content-Length", strconv.Itoa(len(body)))
+	w.WriteHeader(status)
+	w.Write(body)
 	return nil
 }
