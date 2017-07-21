@@ -142,7 +142,8 @@ type Claims struct {
 	Email         string
 	EmailVerified bool
 
-	Groups []string
+	Groups       []string
+	CustomClaims map[string]interface{}
 }
 
 // AuthRequest represents a OAuth2 client authorization request. It holds the state

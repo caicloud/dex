@@ -149,11 +149,12 @@ func toStorageClient(c Client) storage.Client {
 
 // Claims is a mirrored struct from storage with JSON struct tags.
 type Claims struct {
-	UserID        string   `json:"userID"`
-	Username      string   `json:"username"`
-	Email         string   `json:"email"`
-	EmailVerified bool     `json:"emailVerified"`
-	Groups        []string `json:"groups,omitempty"`
+	UserID        string                 `json:"userID"`
+	Username      string                 `json:"username"`
+	Email         string                 `json:"email"`
+	EmailVerified bool                   `json:"emailVerified"`
+	Groups        []string               `json:"groups,omitempty"`
+	CustomClaims  map[string]interface{} `json:",inline"`
 }
 
 func fromStorageClaims(i storage.Claims) Claims {
@@ -163,6 +164,7 @@ func fromStorageClaims(i storage.Claims) Claims {
 		Email:         i.Email,
 		EmailVerified: i.EmailVerified,
 		Groups:        i.Groups,
+		CustomClaims:  i.CustomClaims,
 	}
 }
 
@@ -173,6 +175,7 @@ func toStorageClaims(i Claims) storage.Claims {
 		Email:         i.Email,
 		EmailVerified: i.EmailVerified,
 		Groups:        i.Groups,
+		CustomClaims:  i.CustomClaims,
 	}
 }
 
