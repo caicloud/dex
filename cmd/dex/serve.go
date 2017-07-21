@@ -191,10 +191,12 @@ func serve(cmd *cobra.Command, args []string) error {
 	now := func() time.Time { return time.Now().UTC() }
 
 	serverConfig := server.Config{
+		SupportedScopes:        c.OAuth2.Scopes,
 		SupportedResponseTypes: c.OAuth2.ResponseTypes,
 		SkipApprovalScreen:     c.OAuth2.SkipApprovalScreen,
 		AllowedOrigins:         c.Web.AllowedOrigins,
 		Issuer:                 c.Issuer,
+		MainConnector:          c.MainConnector,
 		Storage:                s,
 		Web:                    c.Frontend,
 		Logger:                 logger,
