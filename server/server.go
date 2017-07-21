@@ -19,6 +19,7 @@ import (
 	"github.com/gorilla/mux"
 
 	"github.com/coreos/dex/connector"
+	"github.com/coreos/dex/connector/cauth"
 	"github.com/coreos/dex/connector/github"
 	"github.com/coreos/dex/connector/gitlab"
 	"github.com/coreos/dex/connector/ldap"
@@ -47,6 +48,8 @@ type Config struct {
 	// The backing persistence layer.
 	Storage storage.Storage
 
+	MainConnector string
+
 	// Valid values are "code" to enable the code flow and "token" to enable the implicit
 	// flow. If no response types are supplied this value defaults to "code".
 	SupportedResponseTypes []string
@@ -71,6 +74,8 @@ type Config struct {
 	Web WebConfig
 
 	Logger logrus.FieldLogger
+
+	SupportedScopes []string
 }
 
 // WebConfig holds the server's frontend templates and asset configuration.
@@ -114,6 +119,8 @@ type Server struct {
 	// Map of connector IDs to connectors.
 	connectors map[string]Connector
 
+	mainConnector string
+
 	storage storage.Storage
 
 	mux http.Handler
@@ -124,6 +131,8 @@ type Server struct {
 	skipApproval bool
 
 	supportedResponseTypes map[string]bool
+
+	supportedScopes map[string]bool
 
 	now func() time.Time
 
@@ -163,6 +172,15 @@ func newServer(ctx context.Context, c Config, rotationStrategy rotationStrategy)
 		supported[respType] = true
 	}
 
+	supportedScopes := make(map[string]bool)
+	for _, scope := range c.SupportedScopes {
+		supportedScopes[scope] = true
+	}
+	hasSupportedScopes := []string{scopeOpenID, scopeEmail, scopeProfile, scopeGroups, scopeOfflineAccess}
+	for _, scope := range hasSupportedScopes {
+		supportedScopes[scope] = true
+	}
+
 	web := webConfig{
 		dir:       c.Web.Dir,
 		logoURL:   c.Web.LogoURL,
@@ -184,8 +202,10 @@ func newServer(ctx context.Context, c Config, rotationStrategy rotationStrategy)
 	s := &Server{
 		issuerURL:              *issuerURL,
 		connectors:             make(map[string]Connector),
+		mainConnector:          c.MainConnector,
 		storage:                newKeyCacher(c.Storage, now),
 		supportedResponseTypes: supported,
+		supportedScopes:        supportedScopes,
 		idTokensValidFor:       value(c.IDTokensValidFor, 24*time.Hour),
 		skipApproval:           c.SkipApprovalScreen,
 		now:                    now,
@@ -391,6 +411,7 @@ var ConnectorsConfig = map[string]func() ConnectorConfig{
 	"saml":         func() ConnectorConfig { return new(saml.Config) },
 	// Keep around for backwards compatibility.
 	"samlExperimental": func() ConnectorConfig { return new(saml.Config) },
+	"cauth":            func() ConnectorConfig { return new(cauth.Config) },
 }
 
 // openConnector will parse the connector config and open the connector.
@@ -468,4 +489,14 @@ func (s *Server) getConnector(id string) (Connector, error) {
 	}
 
 	return conn, nil
+}
+
+func (s *Server) getMainConnector() (connector.MainConnector, error) {
+	if c, ok := s.connectors[s.mainConnector]; !ok {
+		return nil, fmt.Errorf("Failed to get connector %v", s.mainConnector)
+	} else if mc, ok := c.Connector.(connector.MainConnector); !ok {
+		return nil, fmt.Errorf("%v is not a main connector", s.mainConnector)
+	} else {
+		return mc, nil
+	}
 }

@@ -80,6 +80,25 @@ func (d dexAPI) DeleteClient(ctx context.Context, req *api.DeleteClientReq) (*ap
 	return &api.DeleteClientResp{}, nil
 }
 
+func (d dexAPI) GetClient(ctx context.Context, req *api.GetClientReq) (*api.GetClientResp, error) {
+	c, err := d.s.GetClient(req.Id)
+	if err != nil {
+		d.logger.Errorf("api: failed to get client: %v", err)
+		return nil, fmt.Errorf("get client: %v", err)
+	}
+	return &api.GetClientResp{
+		Client: &api.Client{
+			Id:           c.ID,
+			Secret:       c.Secret,
+			RedirectUris: c.RedirectURIs,
+			TrustedPeers: c.TrustedPeers,
+			Public:       c.Public,
+			Name:         c.Name,
+			LogoUrl:      c.LogoURL,
+		},
+	}, nil
+}
+
 // checkCost returns an error if the hash provided does not meet minimum cost requirement
 func checkCost(hash []byte) error {
 	actual, err := bcrypt.Cost(hash)
@@ -278,4 +297,30 @@ func (d dexAPI) RevokeRefresh(ctx context.Context, req *api.RevokeRefreshReq) (*
 	}
 
 	return &api.RevokeRefreshResp{}, nil
+}
+
+func (d dexAPI) GetRefreshByUserAndClient(ctx context.Context, req *api.GetRefreshByUserAndClientReq) (*api.GetRefreshByUserAndClientResp, error) {
+	id := new(internal.IDTokenSubject)
+	if err := internal.Unmarshal(req.UserId, id); err != nil {
+		d.logger.Errorf("api: failed to unmarshal ID Token subject: %v", err)
+		return nil, err
+	}
+
+	if off, err := d.s.GetOfflineSessions(id.UserId, id.ConnId); err != nil {
+		return nil, err
+	} else if refreshRef, ok := off.Refresh[req.ClientId]; !ok {
+		return nil, fmt.Errorf("refresh token of client %v does not exist", req.ClientId)
+	} else if token, err := d.s.GetRefresh(refreshRef.ID); err != nil {
+		return nil, err
+	} else {
+		return &api.GetRefreshByUserAndClientResp{
+			&api.RefreshToken{
+				Id:       token.ID,
+				ClientId: token.ClientID,
+				Token:    token.Token,
+			},
+		}, nil
+
+	}
+
 }
