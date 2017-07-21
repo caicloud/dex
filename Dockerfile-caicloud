@@ -1,0 +1,21 @@
+FROM cargo.caicloud.io/caicloud/debian:jessie
+MAINTAINER LiuBo <liubo@caicloud.io>
+
+RUN echo "deb http://mirrors.aliyun.com/debian/ jessie main non-free contrib" > /etc/apt/sources.list
+RUN echo "deb http://mirrors.aliyun.com/debian/ jessie-proposed-updates main non-free contrib" >> /etc/apt/sources.list
+RUN echo "deb-src http://mirrors.aliyun.com/debian/ jessie main non-free contrib" >>  /etc/apt/sources.list
+RUN echo "deb-src http://mirrors.aliyun.com/debian/ jessie-proposed-updates main non-free contrib" >> /etc/apt/sources.list
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+  ca-certificates \
+  bash && \
+  apt-get clean && \
+  rm -rf /var/lib/apt/lists/*
+
+
+RUN mkdir /app
+
+COPY web /app/web
+COPY bin/dex /app/dex
+
+WORKDIR /app
