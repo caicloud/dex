@@ -155,7 +155,7 @@ func (c *conn) UpdateAuthRequest(id string, updater func(a storage.AuthRequest) 
 				claims_email_verified = $12,
 				claims_groups = $13,
 				connector_id = $14, connector_data = $15,
-				expiry = $16
+				expiry = $16,
 				claims_custom_claims = $17
 			where id = $18;
 		`,
@@ -276,7 +276,7 @@ func (c *conn) CreateRefresh(r storage.RefreshToken) error {
 		encoder(r.Claims.Groups),
 		r.ConnectorID, r.ConnectorData,
 		r.Token, r.CreatedAt, r.LastUsed,
-		r.Claims.CustomClaims,
+		encoder(r.Claims.CustomClaims),
 	)
 	if err != nil {
 		if c.alreadyExistsCheck(err) {
@@ -311,7 +311,7 @@ func (c *conn) UpdateRefreshToken(id string, updater func(old storage.RefreshTok
 				connector_data = $10,
 				token = $11,
 				created_at = $12,
-				last_used = $13
+				last_used = $13,
 				claims_custom_claims = $14
 			where
 				id = $15
@@ -383,6 +383,7 @@ func scanRefresh(s scanner) (r storage.RefreshToken, err error) {
 		decoder(&r.Claims.Groups),
 		&r.ConnectorID, &r.ConnectorData,
 		&r.Token, &r.CreatedAt, &r.LastUsed,
+		decoder(&r.Claims.CustomClaims),
 	)
 	if err != nil {
 		if err == sql.ErrNoRows {

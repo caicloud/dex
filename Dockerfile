@@ -18,6 +18,6 @@ COPY _output/bin/dex /usr/local/bin/dex
 COPY web /web
 WORKDIR /
 
-ENTRYPOINT ["dex"]
+#ENTRYPOINT ["dex"]
 
-CMD ["version"]
+#CMD ["version"]
