@@ -32,6 +32,12 @@ type cauthConnector struct {
 	logger   logrus.FieldLogger
 }
 
+// TODO(liubog2008): try to support session management
+type connectorData struct {
+	// store user id as a session
+	UserID string `json:"userId"`
+}
+
 func (c *cauthConnector) Login(ctx context.Context, s connector.Scopes, username, password string) (connector.Identity, bool, error) {
 	if u, authed, err := c.auth(username, password); err != nil {
 		return connector.Identity{}, false, err
@@ -40,6 +46,11 @@ func (c *cauthConnector) Login(ctx context.Context, s connector.Scopes, username
 	} else if claim, err := c.getClaim(username); err != nil {
 		return connector.Identity{}, false, err
 	} else {
+		data := connectorData{UserID: u.Username}
+		connData, err := json.Marshal(data)
+		if err != nil {
+			return connector.Identity{}, false, err
+		}
 		return connector.Identity{
 			UserID:        u.Username,
 			Username:      u.Nickname,
@@ -48,8 +59,8 @@ func (c *cauthConnector) Login(ctx context.Context, s connector.Scopes, username
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
+			ConnectorData: connData,
 		}, true, nil
 	}
 }
@@ -68,7 +79,6 @@ func (c *cauthConnector) BindRemoteUser(connID string, identity *connector.Ident
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
 		}, nil
 	}
@@ -88,7 +98,6 @@ func (c *cauthConnector) RemoteUser(connID string, userID string) (*connector.Id
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
 		}, nil
 	}
@@ -233,4 +242,61 @@ func (c *cauthConnector) auth(username string, password string) (*v2.User, bool,
 			}
 		}
 	}
+}
+
+func (c *cauthConnector) getUser(userID string) (*v2.User, error) {
+	url := fmt.Sprintf("http://%s/api/v2/users/%s", c.hostName, userID)
+	req, err := http.NewRequest("GET", url, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	u := v2.User{}
+	if body, err := ioutil.ReadAll(resp.Body); err != nil {
+		return nil, err
+	} else if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("get user info error: status is %v", resp.StatusCode)
+	} else if err := json.Unmarshal(body, &u); err != nil {
+		return nil, err
+	} else {
+		return &u, nil
+	}
+}
+
+func (c *cauthConnector) Refresh(ctx context.Context, s connector.Scopes, ident connector.Identity) (connector.Identity, error) {
+	c.logger.Infof("connector data %v", ident)
+	if len(ident.ConnectorData) == 0 {
+		return ident, fmt.Errorf("cauth: session has expired, please login again")
+	}
+
+	var data connectorData
+	if err := json.Unmarshal(ident.ConnectorData, &data); err != nil {
+		return ident, fmt.Errorf("cauth: unmarshal username: %v", err)
+	}
+
+	u, err := c.getUser(data.UserID)
+	if err != nil {
+		return ident, fmt.Errorf("cauth: can't get user info, user %v does not exists", data.UserID)
+	}
+
+	if claim, err := c.getClaim(data.UserID); err != nil {
+		return connector.Identity{}, err
+	} else {
+		return connector.Identity{
+			UserID:        u.Username,
+			Username:      u.Nickname,
+			Email:         u.Email,
+			EmailVerified: u.EmailVerified,
+			Groups:        claim.Groups,
+			CustomClaims: map[string]interface{}{
+				"teams": claim.Teams,
+			},
+			ConnectorData: ident.ConnectorData,
+		}, nil
+	}
+
 }
