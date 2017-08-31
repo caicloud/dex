@@ -22,6 +22,7 @@ import (
 	"github.com/coreos/dex/connector/cauth"
 	"github.com/coreos/dex/connector/github"
 	"github.com/coreos/dex/connector/gitlab"
+	"github.com/coreos/dex/connector/haier"
 	"github.com/coreos/dex/connector/ldap"
 	"github.com/coreos/dex/connector/mock"
 	"github.com/coreos/dex/connector/oidc"
@@ -412,6 +413,7 @@ var ConnectorsConfig = map[string]func() ConnectorConfig{
 	// Keep around for backwards compatibility.
 	"samlExperimental": func() ConnectorConfig { return new(saml.Config) },
 	"cauth":            func() ConnectorConfig { return new(cauth.Config) },
+	"haier":            func() ConnectorConfig { return new(haier.Config) },
 }
 
 // openConnector will parse the connector config and open the connector.
