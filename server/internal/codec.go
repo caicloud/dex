@@ -2,6 +2,8 @@ package internal
 
 import (
 	"encoding/base64"
+	"fmt"
+	"strings"
 
 	"github.com/golang/protobuf/proto"
 )
@@ -22,4 +24,18 @@ func Unmarshal(s string, message proto.Message) error {
 		return err
 	}
 	return proto.Unmarshal(data, message)
+}
+
+func (s *IDTokenSubject) Marshal() ([]byte, error) {
+	return []byte(s.UserId + "-" + s.ConnId), nil
+}
+
+func (s *IDTokenSubject) Unmarshal(body []byte) error {
+	sub := strings.Split(string(body), "-")
+	if len(sub) != 2 {
+		return fmt.Errorf("can't unmarshal %v to IDTokenSubject", string(body))
+	}
+	s.UserId = sub[0]
+	s.ConnId = sub[1]
+	return nil
 }

@@ -125,13 +125,17 @@ const (
 )
 
 func parseScopes(scopes []string) connector.Scopes {
-	var s connector.Scopes
+	s := connector.Scopes{
+		CustomClaims: map[string]struct{}{},
+	}
 	for _, scope := range scopes {
 		switch scope {
 		case scopeOfflineAccess:
 			s.OfflineAccess = true
 		case scopeGroups:
 			s.Groups = true
+		default:
+			s.CustomClaims[scope] = struct{}{}
 		}
 	}
 	return s
@@ -228,24 +232,7 @@ func (a audience) MarshalJSON() ([]byte, error) {
 	return json.Marshal([]string(a))
 }
 
-type idTokenClaims struct {
-	Issuer           string   `json:"iss"`
-	Subject          string   `json:"sub"`
-	Audience         audience `json:"aud"`
-	Expiry           int64    `json:"exp"`
-	IssuedAt         int64    `json:"iat"`
-	AuthorizingParty string   `json:"azp,omitempty"`
-	Nonce            string   `json:"nonce,omitempty"`
-
-	AccessTokenHash string `json:"at_hash,omitempty"`
-
-	Email         string `json:"email,omitempty"`
-	EmailVerified *bool  `json:"email_verified,omitempty"`
-
-	Groups []string `json:"groups,omitempty"`
-
-	Name string `json:"name,omitempty"`
-}
+type idTokenClaims map[string]interface{}
 
 func (s *Server) newIDToken(clientID string, claims storage.Claims, scopes []string, nonce, accessToken, connID string) (idToken string, expiry time.Time, err error) {
 	keys, err := s.storage.GetKeys()
@@ -277,13 +264,15 @@ func (s *Server) newIDToken(clientID string, claims storage.Claims, scopes []str
 		return "", expiry, fmt.Errorf("failed to marshal offline session ID: %v", err)
 	}
 
-	tok := idTokenClaims{
-		Issuer:   s.issuerURL.String(),
-		Subject:  subjectString,
-		Nonce:    nonce,
-		Expiry:   expiry.Unix(),
-		IssuedAt: issuedAt.Unix(),
+	tok := idTokenClaims{}
+	tok["iss"] = s.issuerURL.String()
+	tok["sub"] = subjectString
+	if len(nonce) != 0 {
+		tok["nonce"] = nonce
+
 	}
+	tok["exp"] = expiry.Unix()
+	tok["iat"] = issuedAt.Unix()
 
 	if accessToken != "" {
 		atHash, err := accessTokenHash(signingAlg, accessToken)
@@ -291,21 +280,26 @@ func (s *Server) newIDToken(clientID string, claims storage.Claims, scopes []str
 			s.logger.Errorf("error computing at_hash: %v", err)
 			return "", expiry, fmt.Errorf("error computing at_hash: %v", err)
 		}
-		tok.AccessTokenHash = atHash
+		tok["at_hash"] = atHash
 	}
 
+	s.logger.Infof("claim: %v", claims)
+	auds := audience{}
 	for _, scope := range scopes {
 		switch {
 		case scope == scopeEmail:
-			tok.Email = claims.Email
-			tok.EmailVerified = &claims.EmailVerified
+			tok["email"] = claims.Email
+			tok["email_verified"] = claims.EmailVerified
 		case scope == scopeGroups:
-			tok.Groups = claims.Groups
+			tok["groups"] = claims.Groups
 		case scope == scopeProfile:
-			tok.Name = claims.Username
+			tok["name"] = claims.Username
 		default:
 			peerID, ok := parseCrossClientScope(scope)
 			if !ok {
+				if c, ok := claims.CustomClaims[scope]; ok {
+					tok[scope] = c
+				}
 				// Ignore unknown scopes. These are already validated during the
 				// initial auth request.
 				continue
@@ -318,19 +312,21 @@ func (s *Server) newIDToken(clientID string, claims storage.Claims, scopes []str
 				// TODO(ericchiang): propagate this error to the client.
 				return "", expiry, fmt.Errorf("peer (%s) does not trust client", peerID)
 			}
-			tok.Audience = append(tok.Audience, peerID)
+			auds = append(auds, peerID)
 		}
 	}
 
-	if len(tok.Audience) == 0 {
-		// Client didn't ask for cross client audience. Set the current
-		// client as the audience.
-		tok.Audience = audience{clientID}
-	} else {
+	if len(auds) != 0 {
 		// Client asked for cross client audience. The current client
 		// becomes the authorizing party.
-		tok.AuthorizingParty = clientID
+		tok["azp"] = clientID
 	}
+	// Client didn't ask for cross client audience. Set the current
+	// client as the audience.
+
+	// aud must contains current client id
+	auds = append(auds, clientID)
+	tok["aud"] = auds
 
 	payload, err := json.Marshal(tok)
 	if err != nil {
@@ -382,8 +378,8 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (req storage.AuthReq
 	}
 
 	var (
-		unrecognized  []string
 		invalidScopes []string
+		unrecognized  []string
 	)
 	hasOpenIDScope := false
 	for _, scope := range scopes {
@@ -394,7 +390,9 @@ func (s *Server) parseAuthorizationRequest(r *http.Request) (req storage.AuthReq
 		default:
 			peerID, ok := parseCrossClientScope(scope)
 			if !ok {
-				unrecognized = append(unrecognized, scope)
+				if ok := s.supportedScopes[scope]; !ok {
+					unrecognized = append(unrecognized, scope)
+				}
 				continue
 			}
 

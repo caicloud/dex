@@ -35,6 +35,14 @@ message DeleteClientResp {
   bool not_found = 1;
 }
 
+message GetClientReq {
+  string id = 1;
+}
+
+message GetClientResp {
+  Client client = 1;
+}
+
 // TODO(ericchiang): expand this.
 
 // Password is an email for password mapping managed by the storage.
@@ -133,12 +141,29 @@ message RevokeRefreshResp {
   bool not_found = 1;
 }
 
+message RefreshToken {
+  string id = 1;
+  string client_id = 2;
+  string token = 3;
+}
+
+message GetRefreshByUserAndClientReq {
+  string user_id = 1;
+  string client_id = 2;
+}
+
+message GetRefreshByUserAndClientResp {
+  RefreshToken token = 1;
+}
+
 // Dex represents the dex gRPC service.
 service Dex {
   // CreateClient creates a client.
   rpc CreateClient(CreateClientReq) returns (CreateClientResp) {};
   // DeleteClient deletes the provided client.
   rpc DeleteClient(DeleteClientReq) returns (DeleteClientResp) {};
+  // GetClient get a provided client.
+  rpc GetClient(GetClientReq) returns (GetClientResp) {};
   // CreatePassword creates a password.
   rpc CreatePassword(CreatePasswordReq) returns (CreatePasswordResp) {};
   // UpdatePassword modifies existing password.
@@ -155,4 +180,6 @@ service Dex {
   //
   // Note that each user-client pair can have only one refresh token at a time.
   rpc RevokeRefresh(RevokeRefreshReq) returns (RevokeRefreshResp) {};
+
+  rpc GetRefreshByUserAndClient(GetRefreshByUserAndClientReq) returns (GetRefreshByUserAndClientResp) {};
 }

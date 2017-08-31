@@ -174,7 +174,7 @@ func cmd() *cobra.Command {
 			}
 
 			a.provider = provider
-			a.verifier = provider.Verifier(&oidc.Config{ClientID: a.clientID})
+			a.verifier = provider.Verifier(&oidc.Config{SkipClientIDCheck: true})
 
 			http.HandleFunc("/", a.handleIndex)
 			http.HandleFunc("/login", a.handleLogin)

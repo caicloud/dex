@@ -18,13 +18,14 @@ import (
 
 // Config is the config format for the main application.
 type Config struct {
-	Issuer  string  `json:"issuer"`
-	Storage Storage `json:"storage"`
-	Web     Web     `json:"web"`
-	OAuth2  OAuth2  `json:"oauth2"`
-	GRPC    GRPC    `json:"grpc"`
-	Expiry  Expiry  `json:"expiry"`
-	Logger  Logger  `json:"logger"`
+	Issuer        string  `json:"issuer"`
+	Storage       Storage `json:"storage"`
+	MainConnector string  `json:"mainConnector"`
+	Web           Web     `json:"web"`
+	OAuth2        OAuth2  `json:"oauth2"`
+	GRPC          GRPC    `json:"grpc"`
+	Expiry        Expiry  `json:"expiry"`
+	Logger        Logger  `json:"logger"`
 
 	Frontend server.WebConfig `json:"frontend"`
 
@@ -88,6 +89,7 @@ func (p *password) UnmarshalJSON(b []byte) error {
 
 // OAuth2 describes enabled OAuth2 extensions.
 type OAuth2 struct {
+	Scopes        []string `json:"scopes"`
 	ResponseTypes []string `json:"responseTypes"`
 	// If specified, do not prompt the user to approve client authorization. The
 	// act of logging in implies authorization.

@@ -111,7 +111,6 @@ func (s *Server) discoveryHandler() (http.HandlerFunc, error) {
 		Keys:        s.absURL("/keys"),
 		Subjects:    []string{"public"},
 		IDTokenAlgs: []string{string(jose.RS256)},
-		Scopes:      []string{"openid", "email", "groups", "profile", "offline_access"},
 		AuthMethods: []string{"client_secret_basic"},
 		Claims: []string{
 			"aud", "email", "email_verified", "exp",
@@ -123,6 +122,10 @@ func (s *Server) discoveryHandler() (http.HandlerFunc, error) {
 		d.ResponseTypes = append(d.ResponseTypes, responseType)
 	}
 	sort.Strings(d.ResponseTypes)
+	for scope := range s.supportedScopes {
+		d.Scopes = append(d.Scopes, scope)
+	}
+	sort.Strings(d.Scopes)
 
 	data, err := json.MarshalIndent(d, "", "  ")
 	if err != nil {
@@ -183,10 +186,10 @@ func (s *Server) handleAuthorization(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	connectorInfos := make([]connectorInfo, len(connectors))
+	connectorInfos := make([]ConnectorInfo, len(connectors))
 	i := 0
 	for _, conn := range connectors {
-		connectorInfos[i] = connectorInfo{
+		connectorInfos[i] = ConnectorInfo{
 			ID:   conn.ID,
 			Name: conn.Name,
 			// TODO(ericchiang): Make this pass on r.URL.RawQuery and let something latter
@@ -248,6 +251,7 @@ func (s *Server) handleConnectorLogin(w http.ResponseWriter, r *http.Request) {
 				s.renderError(w, http.StatusInternalServerError, "Login error.")
 				return
 			}
+
 			http.Redirect(w, r, callbackURL, http.StatusFound)
 		case connector.PasswordConnector:
 			if err := s.templates.password(w, r.URL.String(), "", false); err != nil {
@@ -288,7 +292,7 @@ func (s *Server) handleConnectorLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		username := r.FormValue("login")
+		username := r.FormValue("username")
 		password := r.FormValue("password")
 
 		identity, ok, err := passwordConnector.Login(r.Context(), scopes, username, password)
@@ -325,7 +329,7 @@ func (s *Server) handleConnectorCallback(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	case "POST": // SAML POST binding
-		if authID = r.PostFormValue("RelayState"); authID == "" {
+		if authID = r.FormValue("RelayState"); authID == "" {
 			s.renderError(w, http.StatusBadRequest, "User session error.")
 			return
 		}
@@ -368,7 +372,7 @@ func (s *Server) handleConnectorCallback(w http.ResponseWriter, r *http.Request)
 			s.renderError(w, http.StatusBadRequest, "Invalid request")
 			return
 		}
-		identity, err = conn.HandlePOST(parseScopes(authReq.Scopes), r.PostFormValue("SAMLResponse"), authReq.ID)
+		identity, err = conn.HandlePOST(parseScopes(authReq.Scopes), r.FormValue("SAMLResponse"), authReq.ID)
 	default:
 		s.renderError(w, http.StatusInternalServerError, "Requested resource does not exist.")
 		return
@@ -387,17 +391,52 @@ func (s *Server) handleConnectorCallback(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
+	w.Header().Set("Location", redirectURL)
 	http.Redirect(w, r, redirectURL, http.StatusSeeOther)
 }
 
-func (s *Server) finalizeLogin(identity connector.Identity, authReq storage.AuthRequest, conn connector.Connector) (string, error) {
+func (s *Server) finalizeLogin(id connector.Identity, authReq storage.AuthRequest, conn connector.Connector) (string, error) {
+
+	var identity *connector.Identity
+	// if is not login by main connector
+	//   convert identity to main identity in main connector
+	s.logger.Infof("connector id: %v", authReq.ConnectorID)
+	if authReq.ConnectorID != s.mainConnector {
+		mc, err := s.getMainConnector()
+		if err != nil {
+			s.logger.Errorf("Failed to get main connector: %v", err)
+			return "", err
+		}
+		identity, err = mc.RemoteUser(authReq.ConnectorID, id.UserID)
+		if err != nil {
+			s.logger.Errorf("Failed to get identity of remote user: %v", err)
+			//TODO(liubog2008): add flag to specify identity is not found or not
+		}
+		// TODO(liubog2008): add config for enableRegisterOnFirstLogin
+		if identity == nil {
+			// bind a new identity in main connector
+			identity, err = mc.BindRemoteUser(authReq.ConnectorID, &id)
+			if err != nil {
+				s.logger.Errorf("Failed to bind identity of remote user: %v", err)
+				return "", err
+			}
+		}
+		// restore ConnectorData of identity
+		identity.ConnectorData = id.ConnectorData
+		identity.CustomClaims = id.CustomClaims
+	} else {
+		identity = &id
+	}
+
 	claims := storage.Claims{
 		UserID:        identity.UserID,
 		Username:      identity.Username,
 		Email:         identity.Email,
 		EmailVerified: identity.EmailVerified,
 		Groups:        identity.Groups,
+		CustomClaims:  identity.CustomClaims,
 	}
+	s.logger.Infof("real claims: %v", claims)
 
 	updater := func(a storage.AuthRequest) (storage.AuthRequest, error) {
 		a.LoggedIn = true
@@ -572,6 +611,7 @@ func (s *Server) sendCodeResponse(w http.ResponseWriter, r *http.Request, authRe
 		u.RawQuery = q.Encode()
 	}
 
+	w.Header().Set("Location", u.String())
 	http.Redirect(w, r, u.String(), http.StatusSeeOther)
 }
 
@@ -588,8 +628,8 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	} else {
-		clientID = r.PostFormValue("client_id")
-		clientSecret = r.PostFormValue("client_secret")
+		clientID = r.FormValue("client_id")
+		clientSecret = r.FormValue("client_secret")
 	}
 
 	client, err := s.storage.GetClient(clientID)
@@ -607,21 +647,21 @@ func (s *Server) handleToken(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	grantType := r.PostFormValue("grant_type")
+	grantType := r.FormValue("grant_type")
 	switch grantType {
 	case grantTypeAuthorizationCode:
 		s.handleAuthCode(w, r, client)
 	case grantTypeRefreshToken:
 		s.handleRefreshToken(w, r, client)
 	default:
-		s.tokenErrHelper(w, errInvalidGrant, "", http.StatusBadRequest)
+		s.tokenErrHelper(w, errInvalidGrant, fmt.Sprintf("grant_type %v is invalid", grantType), http.StatusBadRequest)
 	}
 }
 
 // handle an access token request https://tools.ietf.org/html/rfc6749#section-4.1.3
 func (s *Server) handleAuthCode(w http.ResponseWriter, r *http.Request, client storage.Client) {
-	code := r.PostFormValue("code")
-	redirectURI := r.PostFormValue("redirect_uri")
+	code := r.FormValue("code")
+	redirectURI := r.FormValue("redirect_uri")
 
 	authCode, err := s.storage.GetAuthCode(code)
 	if err != nil || s.now().After(authCode.Expiry) || authCode.ClientID != client.ID {
@@ -780,8 +820,8 @@ func (s *Server) handleAuthCode(w http.ResponseWriter, r *http.Request, client s
 
 // handle a refresh token request https://tools.ietf.org/html/rfc6749#section-6
 func (s *Server) handleRefreshToken(w http.ResponseWriter, r *http.Request, client storage.Client) {
-	code := r.PostFormValue("refresh_token")
-	scope := r.PostFormValue("scope")
+	code := r.FormValue("refresh_token")
+	scope := r.FormValue("scope")
 	if code == "" {
 		s.tokenErrHelper(w, errInvalidRequest, "No refresh token in request.", http.StatusBadRequest)
 		return
@@ -862,6 +902,7 @@ func (s *Server) handleRefreshToken(w http.ResponseWriter, r *http.Request, clie
 		Email:         refresh.Claims.Email,
 		EmailVerified: refresh.Claims.EmailVerified,
 		Groups:        refresh.Claims.Groups,
+		CustomClaims:  refresh.Claims.CustomClaims,
 		ConnectorData: refresh.ConnectorData,
 	}
 
@@ -886,6 +927,7 @@ func (s *Server) handleRefreshToken(w http.ResponseWriter, r *http.Request, clie
 		Email:         ident.Email,
 		EmailVerified: ident.EmailVerified,
 		Groups:        ident.Groups,
+		CustomClaims:  ident.CustomClaims,
 	}
 
 	accessToken := storage.NewID()
@@ -921,6 +963,7 @@ func (s *Server) handleRefreshToken(w http.ResponseWriter, r *http.Request, clie
 		old.Claims.EmailVerified = ident.EmailVerified
 		old.Claims.Groups = ident.Groups
 		old.ConnectorData = ident.ConnectorData
+		old.Claims.CustomClaims = ident.CustomClaims
 		old.LastUsed = lastUsed
 		return old, nil
 	}
@@ -978,7 +1021,7 @@ func (s *Server) writeAccessToken(w http.ResponseWriter, idToken, accessToken, r
 }
 
 func (s *Server) renderError(w http.ResponseWriter, status int, description string) {
-	if err := s.templates.err(w, http.StatusText(status), description); err != nil {
+	if err := s.templates.err(w, status, description); err != nil {
 		s.logger.Errorf("Server template error: %v", err)
 	}
 }

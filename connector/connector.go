@@ -19,6 +19,8 @@ type Scopes struct {
 
 	// The client has requested group information about the end user.
 	Groups bool
+
+	CustomClaims map[string]struct{}
 }
 
 // Identity represents the ID Token claims supported by the server.
@@ -29,6 +31,8 @@ type Identity struct {
 	EmailVerified bool
 
 	Groups []string
+
+	CustomClaims map[string]interface{}
 
 	// ConnectorData holds data used by the connector for subsequent requests after initial
 	// authentication, such as access tokens for upstream provides.
@@ -93,4 +97,9 @@ type RefreshConnector interface {
 	// connector should attempt to update the identity object to reflect any
 	// changes since the token was last refreshed.
 	Refresh(ctx context.Context, s Scopes, identity Identity) (Identity, error)
+}
+
+type MainConnector interface {
+	RemoteUser(connID string, userID string) (*Identity, error)
+	BindRemoteUser(connID string, identity *Identity) (*Identity, error)
 }
