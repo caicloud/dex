@@ -59,7 +59,6 @@ func (c *cauthConnector) Login(ctx context.Context, s connector.Scopes, username
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
 			ConnectorData: connData,
 		}, true, nil
@@ -80,7 +79,6 @@ func (c *cauthConnector) BindRemoteUser(connID string, identity *connector.Ident
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
 		}, nil
 	}
@@ -100,7 +98,6 @@ func (c *cauthConnector) RemoteUser(connID string, userID string) (*connector.Id
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
 		}, nil
 	}
@@ -297,7 +294,6 @@ func (c *cauthConnector) Refresh(ctx context.Context, s connector.Scopes, ident 
 			Groups:        claim.Groups,
 			CustomClaims: map[string]interface{}{
 				"teams": claim.Teams,
-				"org":   claim.Org,
 			},
 			ConnectorData: ident.ConnectorData,
 		}, nil
